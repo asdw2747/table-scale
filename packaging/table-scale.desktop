@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=TableScale
+Comment=3D miniature scale converter and battle map print tiler
+Exec=table-scale
+Icon=table-scale
+Terminal=false
+Categories=Graphics;Utility;
+Keywords=tabletop;miniature;battle map;pdf;print;
+StartupWMClass=table-scale

@@ -1,0 +1,40 @@
+[package]
+name = "table-scale"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+description = "3D miniature scale converter and multi-page battle map print tiler."
+keywords = ["tabletop", "miniatures", "battle-map", "pdf", "egui"]
+categories = ["graphics", "gui"]
+
+[dependencies]
+eframe = { version = "0.37.0", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "glow",
+    "links",
+    "wayland",
+    "x11",
+] }
+egui = "0.37.0"
+image = { version = "0.25.10", default-features = false, features = [
+    "jpeg",
+    "png",
+    "webp",
+] }
+png = "0.18.1"
+printpdf = { version = "0.12.9", default-features = false }
+rfd = "0.18.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+
+[dev-dependencies]
+lopdf = { version = "0.44.0", default-features = false }
+
+[build-dependencies]
+embed-resource = "3.0.12"

@@ -1,0 +1,10 @@
+[target.x86_64-pc-windows-msvc]
+# Keep the released .exe independent of a separately installed VC++ runtime.
+# The xwin SDK does not ship the PDBs referenced by the static CRT libraries;
+# suppress the resulting harmless LNK4099 linker chatter.
+rustflags = [
+    "-C",
+    "target-feature=+crt-static",
+    "-C",
+    "link-arg=/ignore:4099",
+]

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.asdw2747.TableScale</id>
+  <name>TableScale</name>
+  <summary>3D miniature scale converter and battle map print tiler</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>TableScale is an offline desktop utility for tabletop gamers. It converts miniature scales, calculates model heights, and tiles high-resolution battle maps into true-scale multi-page PDF or 300 DPI PNG tile sets.</p>
+  </description>
+  <launchable type="desktop-id">table-scale.desktop</launchable>
+  <provides>
+    <binary>table-scale</binary>
+  </provides>
+  <categories>
+    <category>Graphics</category>
+    <category>Utility</category>
+  </categories>
+</component>

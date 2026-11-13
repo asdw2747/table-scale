@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#20232d"/>
+      <stop offset="1" stop-color="#12141a"/>
+    </linearGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f2c98a"/>
+      <stop offset="1" stop-color="#c98b45"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <rect x="32" y="32" width="960" height="960" rx="210" fill="url(#bg)"/>
+  <rect x="52" y="52" width="920" height="920" rx="190" fill="none" stroke="#343846" stroke-width="8"/>
+
+  <g opacity="0.38" stroke="#6fb3b8" stroke-width="5" fill="none">
+    <rect x="196" y="196" width="632" height="632" rx="26"/>
+    <line x1="406.7" y1="196" x2="406.7" y2="828"/>
+    <line x1="617.3" y1="196" x2="617.3" y2="828"/>
+    <line x1="196" y1="406.7" x2="828" y2="406.7"/>
+    <line x1="196" y1="617.3" x2="828" y2="617.3"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <path d="M512 214 L748 360 L748 664 L512 810 L276 664 L276 360 Z"
+          fill="#171a21" stroke="url(#brass)" stroke-width="26" stroke-linejoin="round"/>
+    <path d="M512 300 L676 395 L676 555 L512 650 L348 555 L348 395 Z"
+          fill="none" stroke="#e0a458" stroke-width="12" stroke-linejoin="round" opacity="0.9"/>
+    <path d="M512 300 L512 650 M348 395 L676 555 M676 395 L348 555"
+          fill="none" stroke="#e0a458" stroke-width="8" opacity="0.58"/>
+    <path d="M512 404 L604 457 L604 563 L512 616 L420 563 L420 457 Z"
+          fill="#222630" stroke="#f2c98a" stroke-width="10" stroke-linejoin="round"/>
+    <circle cx="512" cy="510" r="26" fill="#6fb3b8"/>
+  </g>
+
+  <g font-family="DejaVu Sans, sans-serif" font-weight="700" font-size="82" fill="#f2c98a">
+    <text x="512" y="902" text-anchor="middle" letter-spacing="12">TABLESCALE</text>
+  </g>
+</svg>
