@@ -16,7 +16,9 @@ use image::DynamicImage;
 use crate::export::{self, ExportJob};
 use crate::scale::{self, SCALE_PRESETS};
 use crate::theme;
-use crate::tiler::{Orientation, SizeMode, SquareUnit, TileLayout, TilerSettings, PAPER_PRESETS};
+use crate::tiler::{
+    LengthUnit, Orientation, PaperPreset, SizeMode, TileLayout, TilerSettings, PAPER_PRESETS,
+};
 
 const SETTINGS_WIDTH: f32 = 342.0;
 const PREVIEW_MIN_HEIGHT: f32 = 180.0;
@@ -1094,7 +1096,7 @@ impl TableScaleApp {
                 );
                 ui.label(
                     RichText::new(
-                        "Print on Letter, Legal, or Tabloid sheets with trim margins and glue overlap.",
+                        "Print on US Letter/Legal/Tabloid or ISO A4\u{2013}A0 sheets with trim margins and glue overlap.",
                     )
                     .size(12.0)
                     .color(theme::MUTED),
@@ -1312,23 +1314,17 @@ impl TableScaleApp {
                                 .suffix(format!(" {}", current_unit.label())),
                         );
                         let square_in = self.tiler.square_size_in();
-                        if choice_pill(
-                            ui,
-                            current_unit == SquareUnit::Inches,
-                            "in",
-                        ) && current_unit != SquareUnit::Inches
+                        if choice_pill(ui, current_unit == LengthUnit::Inches, "in")
+                            && current_unit != LengthUnit::Inches
                         {
                             self.tiler.square_size = square_in;
-                            self.tiler.square_unit = SquareUnit::Inches;
+                            self.tiler.square_unit = LengthUnit::Inches;
                         }
-                        if choice_pill(
-                            ui,
-                            current_unit == SquareUnit::Millimeters,
-                            "mm",
-                        ) && current_unit != SquareUnit::Millimeters
+                        if choice_pill(ui, current_unit == LengthUnit::Millimeters, "mm")
+                            && current_unit != LengthUnit::Millimeters
                         {
                             self.tiler.square_size = crate::scale::inches_to_mm(square_in);
-                            self.tiler.square_unit = SquareUnit::Millimeters;
+                            self.tiler.square_unit = LengthUnit::Millimeters;
                         }
                     });
                     let square_in = self.tiler.square_size_in();
@@ -1412,23 +1408,92 @@ impl TableScaleApp {
             ui.set_min_width(ui.available_width());
             theme::section_title(ui, "Paper & assembly", Some("Printer setup"));
             ui.add_space(6.0);
-            let (sheet_w, sheet_h) = self.tiler.paper_size_in();
+            let paper_options: Vec<(PaperPreset, String)> = PAPER_PRESETS
+                .iter()
+                .map(|paper| (*paper, paper_choice_label(*paper, &self.tiler)))
+                .collect();
+            let selected_text = paper_options
+                .iter()
+                .find(|(paper, _)| *paper == self.tiler.paper)
+                .map(|(_, label)| label.clone())
+                .unwrap_or_else(|| self.tiler.paper.label().to_owned());
+            let previous_paper = self.tiler.paper;
+            let mut selected_paper = previous_paper;
             egui::ComboBox::from_id_salt("paper-size")
-                .selected_text(format!(
-                    "{}  ({sheet_w:.1} \u{00d7} {sheet_h:.1} in)",
-                    self.tiler.paper.label()
-                ))
+                .selected_text(selected_text)
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
-                    for paper in PAPER_PRESETS {
-                        let (w, h) = paper.size_in();
-                        ui.selectable_value(
-                            &mut self.tiler.paper,
-                            paper,
-                            format!("{}  ({w:.1} \u{00d7} {h:.1} in)", paper.label()),
-                        );
+                    for (paper, label) in &paper_options {
+                        ui.selectable_value(&mut selected_paper, *paper, label);
                     }
                 });
+            if selected_paper != previous_paper {
+                self.tiler.select_paper(selected_paper);
+            }
+
+            if self.tiler.paper == PaperPreset::Custom {
+                ui.add_space(6.0);
+                ui_field_label(ui, "Custom sheet size (portrait)");
+                let custom_unit_before = self.tiler.custom_paper_unit;
+                ui.horizontal(|ui| {
+                    if choice_pill(
+                        ui,
+                        custom_unit_before == LengthUnit::Inches,
+                        "in",
+                    ) && custom_unit_before != LengthUnit::Inches
+                    {
+                        self.tiler.custom_paper_unit = LengthUnit::Inches;
+                        self.tiler.assembly_unit = LengthUnit::Inches;
+                    }
+                    if choice_pill(
+                        ui,
+                        custom_unit_before == LengthUnit::Millimeters,
+                        "mm",
+                    ) && custom_unit_before != LengthUnit::Millimeters
+                    {
+                        self.tiler.custom_paper_unit = LengthUnit::Millimeters;
+                        self.tiler.assembly_unit = LengthUnit::Millimeters;
+                    }
+                });
+                let custom_unit = self.tiler.custom_paper_unit;
+                let (min, max, speed, decimals) = match custom_unit {
+                    LengthUnit::Inches => (0.1, 200.0, 0.01, 2),
+                    LengthUnit::Millimeters => (3.0, 5080.0, 0.1, 1),
+                };
+                let mut width = custom_unit.display_value(self.tiler.custom_paper_width_in);
+                let mut height = custom_unit.display_value(self.tiler.custom_paper_height_in);
+                ui.horizontal(|ui| {
+                    ui_field_label(ui, "Width");
+                    let changed = ui
+                        .add(
+                            egui::DragValue::new(&mut width)
+                                .range(min..=max)
+                                .speed(speed)
+                                .fixed_decimals(decimals)
+                                .suffix(format!(" {}", custom_unit.label())),
+                        )
+                        .changed();
+                    if changed {
+                        self.tiler.custom_paper_width_in = custom_unit.to_inches(width);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui_field_label(ui, "Height");
+                    let changed = ui
+                        .add(
+                            egui::DragValue::new(&mut height)
+                                .range(min..=max)
+                                .speed(speed)
+                                .fixed_decimals(decimals)
+                                .suffix(format!(" {}", custom_unit.label())),
+                        )
+                        .changed();
+                    if changed {
+                        self.tiler.custom_paper_height_in = custom_unit.to_inches(height);
+                    }
+                });
+            }
+
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if choice_pill(
@@ -1446,31 +1511,81 @@ impl TableScaleApp {
                     self.tiler.orientation = Orientation::Landscape;
                 }
             });
+
             ui.add_space(8.0);
             ui.horizontal(|ui| {
+                ui_field_label(ui, "Margin/overlap units");
+                if choice_pill(
+                    ui,
+                    self.tiler.assembly_unit == LengthUnit::Inches,
+                    "in",
+                ) {
+                    self.tiler.assembly_unit = LengthUnit::Inches;
+                }
+                if choice_pill(
+                    ui,
+                    self.tiler.assembly_unit == LengthUnit::Millimeters,
+                    "mm",
+                ) {
+                    self.tiler.assembly_unit = LengthUnit::Millimeters;
+                }
+            });
+
+            let assembly_unit = self.tiler.assembly_unit;
+            let margin_max = assembly_unit.display_value(2.0);
+            let (assembly_speed, assembly_decimals) = match assembly_unit {
+                LengthUnit::Inches => (0.01, 2),
+                LengthUnit::Millimeters => (0.1, 2),
+            };
+            let mut margin = assembly_unit.display_value(self.tiler.margin_in);
+            let mut overlap = assembly_unit.display_value(self.tiler.overlap_in);
+            ui.horizontal(|ui| {
                 ui_field_label(ui, "Printer margin");
-                ui.add(
-                    egui::DragValue::new(&mut self.tiler.margin_in)
-                        .range(0.0..=2.0)
-                        .speed(0.01)
-                        .fixed_decimals(2)
-                        .suffix(" in"),
-                );
+                let changed = ui
+                    .add(
+                        egui::DragValue::new(&mut margin)
+                            .range(0.0..=margin_max)
+                            .speed(assembly_speed)
+                            .fixed_decimals(assembly_decimals)
+                            .suffix(format!(" {}", assembly_unit.label())),
+                    )
+                    .changed();
+                if changed {
+                    self.tiler.margin_in = assembly_unit.to_inches(margin);
+                }
             });
             ui.horizontal(|ui| {
                 ui_field_label(ui, "Glue/tape overlap");
-                ui.add(
-                    egui::DragValue::new(&mut self.tiler.overlap_in)
-                        .range(0.0..=2.0)
-                        .speed(0.01)
-                        .fixed_decimals(2)
-                        .suffix(" in"),
-                );
+                let changed = ui
+                    .add(
+                        egui::DragValue::new(&mut overlap)
+                            .range(0.0..=margin_max)
+                            .speed(assembly_speed)
+                            .fixed_decimals(assembly_decimals)
+                            .suffix(format!(" {}", assembly_unit.label())),
+                    )
+                    .changed();
+                if changed {
+                    self.tiler.overlap_in = assembly_unit.to_inches(overlap);
+                }
             });
+
+            let (paper_w, paper_h) = self.tiler.paper_size_in();
+            let (paper_mm_w, paper_mm_h) = self.tiler.paper_size_mm();
+            ui.label(
+                RichText::new(format!(
+                    "Sheet: {} \u{2014} {paper_mm_w:.1} \u{00d7} {paper_mm_h:.1} mm ({paper_w:.2} \u{00d7} {paper_h:.2} in)",
+                    self.tiler.paper.label()
+                ))
+                .size(11.0)
+                .color(theme::MUTED),
+            );
             let (printable_w, printable_h) = self.tiler.printable_area_in();
             ui.label(
                 RichText::new(format!(
-                    "Printable area per sheet: {printable_w:.2} \u{00d7} {printable_h:.2} in"
+                    "Printable area per sheet: {:.1} \u{00d7} {:.1} mm ({printable_w:.2} \u{00d7} {printable_h:.2} in)",
+                    crate::scale::inches_to_mm(printable_w),
+                    crate::scale::inches_to_mm(printable_h)
                 ))
                 .size(11.0)
                 .color(theme::DIM),
@@ -1478,8 +1593,11 @@ impl TableScaleApp {
             if let Some(layout) = layout {
                 ui.label(
                     RichText::new(format!(
-                        "Sheet step: {:.2} \u{00d7} {:.2} in",
-                        layout.step_x_in, layout.step_y_in
+                        "Sheet step: {:.1} \u{00d7} {:.1} mm ({:.2} \u{00d7} {:.2} in)",
+                        crate::scale::inches_to_mm(layout.step_x_in),
+                        crate::scale::inches_to_mm(layout.step_y_in),
+                        layout.step_x_in,
+                        layout.step_y_in
                     ))
                     .size(11.0)
                     .color(theme::DIM),
@@ -1727,6 +1845,31 @@ impl eframe::App for TableScaleApp {
                 ctx.request_repaint_after(remaining.min(Duration::from_millis(250)));
             }
         }
+    }
+}
+
+fn paper_choice_label(paper: PaperPreset, tiler: &TilerSettings) -> String {
+    if paper == PaperPreset::Custom {
+        let unit = tiler.custom_paper_unit;
+        let width = unit.display_value(tiler.custom_paper_width_in);
+        let height = unit.display_value(tiler.custom_paper_height_in);
+        return format!("Custom  ({width:.1} \u{00d7} {height:.1} {})", unit.label());
+    }
+    let Some((width_in, height_in)) = paper.standard_size_in() else {
+        return paper.label().to_owned();
+    };
+    if paper.is_iso() {
+        format!(
+            "{}  ({:.0} \u{00d7} {:.0} mm)",
+            paper.label(),
+            crate::scale::inches_to_mm(width_in),
+            crate::scale::inches_to_mm(height_in)
+        )
+    } else {
+        format!(
+            "{}  ({width_in:.2} \u{00d7} {height_in:.2} in)",
+            paper.label()
+        )
     }
 }
 

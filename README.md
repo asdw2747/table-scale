@@ -27,10 +27,12 @@ and pure-Rust file, image, and PDF handling.
   Images are decoded in the background, with a 100-megapixel safety limit.
 - Define the physical map size by grid count and square size, or by exact
   inches.
-- Tile onto **Letter**, **Legal**, or **Tabloid** paper in portrait or
-  landscape orientation.
-- Configure printer margin and glue/tape overlap. The default is `0.25 in` for
+- Tile onto **Letter**, **Legal**, or **Tabloid** paper, ISO **A4–A0**, or
+  custom paper dimensions in portrait or landscape orientation.
+- Margins and glue/tape overlap display in inches or millimetres, switching
+  automatically with the paper family. The physical default is `0.25 in` for
   both.
+- Paper and printable-area summaries show both millimetres and inches.
 - Live page-grid preview with numbered pages, overlap bands, sheet dimensions,
   and effective source DPI.
 - Export a true 1:1 multi-page PDF with printer-friendly trim marks, alignment
@@ -94,7 +96,7 @@ a self-contained AppImage with `appimagetool`:
 ./scripts/build-appimage.sh
 ```
 
-The AppImage is written to `dist/TableScale-1.0.0-x86_64.AppImage`. The release
+The AppImage is written to `dist/TableScale-1.1.0-x86_64.AppImage`. The release
 archive includes an `install-linux.sh` helper that installs the binary, icon,
 desktop entry, and AppStream metadata under `~/.local` (or `$PREFIX`).
 

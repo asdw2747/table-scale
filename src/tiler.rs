@@ -1,6 +1,6 @@
 //! Paper geometry and tiling calculations for battle map printing.
 
-use crate::scale::mm_to_inches;
+use crate::scale::{inches_to_mm, mm_to_inches};
 
 const EPSILON: f64 = 1e-9;
 
@@ -14,26 +14,40 @@ pub enum SizeMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SquareUnit {
+pub enum LengthUnit {
     Inches,
     Millimeters,
 }
 
-impl SquareUnit {
+impl LengthUnit {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Inches => "in",
             Self::Millimeters => "mm",
         }
     }
+
+    pub fn to_inches(self, value: f64) -> f64 {
+        match self {
+            Self::Inches => value,
+            Self::Millimeters => mm_to_inches(value),
+        }
+    }
+
+    pub fn display_value(self, inches: f64) -> f64 {
+        match self {
+            Self::Inches => inches,
+            Self::Millimeters => inches_to_mm(inches),
+        }
+    }
 }
 
 /// UI bounds for a square size. These are unit-aware so that switching to
 /// millimetres does not clamp a standard 1-inch (25.4 mm) square.
-pub fn square_size_bounds(unit: SquareUnit) -> std::ops::RangeInclusive<f64> {
+pub fn square_size_bounds(unit: LengthUnit) -> std::ops::RangeInclusive<f64> {
     match unit {
-        SquareUnit::Inches => 0.1..=10.0,
-        SquareUnit::Millimeters => 1.0..=100.0,
+        LengthUnit::Inches => 0.1..=10.0,
+        LengthUnit::Millimeters => 1.0..=100.0,
     }
 }
 
@@ -42,12 +56,24 @@ pub enum PaperPreset {
     Letter,
     Legal,
     Tabloid,
+    A4,
+    A3,
+    A2,
+    A1,
+    A0,
+    Custom,
 }
 
-pub const PAPER_PRESETS: [PaperPreset; 3] = [
+pub const PAPER_PRESETS: [PaperPreset; 9] = [
     PaperPreset::Letter,
     PaperPreset::Legal,
     PaperPreset::Tabloid,
+    PaperPreset::A4,
+    PaperPreset::A3,
+    PaperPreset::A2,
+    PaperPreset::A1,
+    PaperPreset::A0,
+    PaperPreset::Custom,
 ];
 
 impl PaperPreset {
@@ -56,15 +82,32 @@ impl PaperPreset {
             Self::Letter => "Letter",
             Self::Legal => "Legal",
             Self::Tabloid => "Tabloid",
+            Self::A4 => "A4",
+            Self::A3 => "A3",
+            Self::A2 => "A2",
+            Self::A1 => "A1",
+            Self::A0 => "A0",
+            Self::Custom => "Custom",
         }
     }
 
-    /// Portrait width and height in inches.
-    pub const fn size_in(self) -> (f64, f64) {
+    pub const fn is_iso(self) -> bool {
+        matches!(self, Self::A4 | Self::A3 | Self::A2 | Self::A1 | Self::A0)
+    }
+
+    /// Portrait dimensions in inches. ISO values are stored as exact
+    /// millimetre dimensions divided by 25.4.
+    pub fn standard_size_in(self) -> Option<(f64, f64)> {
         match self {
-            Self::Letter => (8.5, 11.0),
-            Self::Legal => (8.5, 14.0),
-            Self::Tabloid => (11.0, 17.0),
+            Self::Letter => Some((8.5, 11.0)),
+            Self::Legal => Some((8.5, 14.0)),
+            Self::Tabloid => Some((11.0, 17.0)),
+            Self::A4 => Some((mm_to_inches(210.0), mm_to_inches(297.0))),
+            Self::A3 => Some((mm_to_inches(297.0), mm_to_inches(420.0))),
+            Self::A2 => Some((mm_to_inches(420.0), mm_to_inches(594.0))),
+            Self::A1 => Some((mm_to_inches(594.0), mm_to_inches(841.0))),
+            Self::A0 => Some((mm_to_inches(841.0), mm_to_inches(1189.0))),
+            Self::Custom => None,
         }
     }
 }
@@ -81,11 +124,15 @@ pub struct TilerSettings {
     pub grid_width: u32,
     pub grid_height: u32,
     pub square_size: f64,
-    pub square_unit: SquareUnit,
+    pub square_unit: LengthUnit,
     pub exact_width_in: f64,
     pub exact_height_in: f64,
     pub paper: PaperPreset,
     pub orientation: Orientation,
+    pub custom_paper_width_in: f64,
+    pub custom_paper_height_in: f64,
+    pub custom_paper_unit: LengthUnit,
+    pub assembly_unit: LengthUnit,
     pub margin_in: f64,
     pub overlap_in: f64,
 }
@@ -97,11 +144,15 @@ impl Default for TilerSettings {
             grid_width: 19,
             grid_height: 19,
             square_size: 1.0,
-            square_unit: SquareUnit::Inches,
+            square_unit: LengthUnit::Inches,
             exact_width_in: 22.0,
             exact_height_in: 28.0,
             paper: PaperPreset::Letter,
             orientation: Orientation::Portrait,
+            custom_paper_width_in: 8.5,
+            custom_paper_height_in: 11.0,
+            custom_paper_unit: LengthUnit::Inches,
+            assembly_unit: LengthUnit::Inches,
             margin_in: 0.25,
             overlap_in: 0.25,
         }
@@ -110,10 +161,45 @@ impl Default for TilerSettings {
 
 impl TilerSettings {
     pub fn square_size_in(&self) -> f64 {
-        match self.square_unit {
-            SquareUnit::Inches => self.square_size,
-            SquareUnit::Millimeters => mm_to_inches(self.square_size),
+        self.square_unit.to_inches(self.square_size)
+    }
+
+    /// Portrait dimensions in inches for the selected paper, including custom
+    /// paper. Orientation is applied by [`Self::paper_size_in`].
+    pub fn portrait_paper_size_in(&self) -> (f64, f64) {
+        match self.paper {
+            PaperPreset::Custom => (self.custom_paper_width_in, self.custom_paper_height_in),
+            _ => self.paper.standard_size_in().unwrap_or((8.5, 11.0)),
         }
+    }
+
+    /// Mounting/printing unit preferred by the current paper family.
+    pub fn preferred_assembly_unit(&self) -> LengthUnit {
+        match self.paper {
+            PaperPreset::Custom => self.custom_paper_unit,
+            paper if paper.is_iso() => LengthUnit::Millimeters,
+            _ => LengthUnit::Inches,
+        }
+    }
+
+    /// Change paper preset and synchronize the margin/overlap display unit.
+    /// Physical margin and overlap values are preserved.
+    pub fn select_paper(&mut self, paper: PaperPreset) {
+        if paper == self.paper {
+            return;
+        }
+        if paper == PaperPreset::Custom {
+            let (width_in, height_in) = self.portrait_paper_size_in();
+            self.custom_paper_width_in = width_in;
+            self.custom_paper_height_in = height_in;
+            self.custom_paper_unit = if self.paper.is_iso() {
+                LengthUnit::Millimeters
+            } else {
+                LengthUnit::Inches
+            };
+        }
+        self.paper = paper;
+        self.assembly_unit = self.preferred_assembly_unit();
     }
 
     /// The finished map size in inches.
@@ -132,11 +218,16 @@ impl TilerSettings {
 
     /// The selected paper size after applying orientation.
     pub fn paper_size_in(&self) -> (f64, f64) {
-        let (width, height) = self.paper.size_in();
+        let (width, height) = self.portrait_paper_size_in();
         match self.orientation {
             Orientation::Portrait => (width, height),
             Orientation::Landscape => (height, width),
         }
+    }
+
+    pub fn paper_size_mm(&self) -> (f64, f64) {
+        let (width, height) = self.paper_size_in();
+        (inches_to_mm(width), inches_to_mm(height))
     }
 
     pub fn printable_area_in(&self) -> (f64, f64) {
@@ -162,6 +253,9 @@ impl TilerSettings {
         }
 
         let (paper_w, paper_h) = self.paper_size_in();
+        if !paper_w.is_finite() || !paper_h.is_finite() || paper_w <= 0.0 || paper_h <= 0.0 {
+            return Err("Enter custom paper dimensions greater than zero.".to_owned());
+        }
         if self.margin_in * 2.0 >= paper_w.min(paper_h) {
             return Err("The printer margin leaves no printable area on this paper.".to_owned());
         }
@@ -356,9 +450,121 @@ mod tests {
 
     #[test]
     fn paper_presets_have_correct_dimensions() {
-        assert_eq!(PaperPreset::Letter.size_in(), (8.5, 11.0));
-        assert_eq!(PaperPreset::Legal.size_in(), (8.5, 14.0));
-        assert_eq!(PaperPreset::Tabloid.size_in(), (11.0, 17.0));
+        assert_eq!(PaperPreset::Letter.standard_size_in(), Some((8.5, 11.0)));
+        assert_eq!(PaperPreset::Legal.standard_size_in(), Some((8.5, 14.0)));
+        assert_eq!(PaperPreset::Tabloid.standard_size_in(), Some((11.0, 17.0)));
+        assert_eq!(PaperPreset::Custom.standard_size_in(), None);
+    }
+
+    #[test]
+    fn iso_paper_dimensions_are_exact_millimetres_in_inches() {
+        let expected = [
+            (PaperPreset::A4, 210.0, 297.0),
+            (PaperPreset::A3, 297.0, 420.0),
+            (PaperPreset::A2, 420.0, 594.0),
+            (PaperPreset::A1, 594.0, 841.0),
+            (PaperPreset::A0, 841.0, 1189.0),
+        ];
+        for (paper, width_mm, height_mm) in expected {
+            let (width_in, height_in) = paper.standard_size_in().unwrap();
+            assert_close(width_in, width_mm / 25.4);
+            assert_close(height_in, height_mm / 25.4);
+            assert!(paper.is_iso());
+        }
+    }
+
+    #[test]
+    fn length_units_convert_losslessly() {
+        assert_close(LengthUnit::Millimeters.to_inches(25.4), 1.0);
+        assert_close(LengthUnit::Millimeters.display_value(1.0), 25.4);
+        assert_close(LengthUnit::Inches.to_inches(1.0), 1.0);
+    }
+
+    #[test]
+    fn paper_selection_switches_assembly_units_without_moving_values() {
+        let mut settings = TilerSettings {
+            margin_in: 0.25,
+            overlap_in: 0.25,
+            ..TilerSettings::default()
+        };
+        assert_eq!(settings.assembly_unit, LengthUnit::Inches);
+
+        settings.select_paper(PaperPreset::A4);
+        assert_eq!(settings.assembly_unit, LengthUnit::Millimeters);
+        assert_eq!(settings.margin_in, 0.25);
+        assert_eq!(settings.overlap_in, 0.25);
+
+        settings.select_paper(PaperPreset::Custom);
+        assert_eq!(settings.paper, PaperPreset::Custom);
+        assert_eq!(settings.custom_paper_unit, LengthUnit::Millimeters);
+        assert_eq!(settings.assembly_unit, LengthUnit::Millimeters);
+        assert_close(settings.custom_paper_width_in, 210.0 / 25.4);
+        assert_close(settings.custom_paper_height_in, 297.0 / 25.4);
+
+        settings.select_paper(PaperPreset::Letter);
+        assert_eq!(settings.assembly_unit, LengthUnit::Inches);
+    }
+
+    #[test]
+    fn custom_paper_supports_orientation_and_validation() {
+        let settings = TilerSettings {
+            paper: PaperPreset::Custom,
+            custom_paper_width_in: 8.0,
+            custom_paper_height_in: 10.0,
+            orientation: Orientation::Landscape,
+            ..TilerSettings::default()
+        };
+        assert_eq!(settings.paper_size_in(), (10.0, 8.0));
+
+        let invalid = TilerSettings {
+            paper: PaperPreset::Custom,
+            custom_paper_width_in: 0.0,
+            ..TilerSettings::default()
+        };
+        assert!(invalid.layout().is_err());
+    }
+
+    #[test]
+    fn custom_paper_tile_counts() {
+        let custom = TilerSettings {
+            paper: PaperPreset::Custom,
+            custom_paper_width_in: 5.0,
+            custom_paper_height_in: 7.0,
+            ..settings_22x28()
+        }
+        .layout()
+        .unwrap();
+        assert_eq!((custom.columns, custom.rows), (6, 5));
+        assert_eq!(custom.page_count(), 30);
+    }
+
+    #[test]
+    fn iso_paper_tile_counts() {
+        let a4 = TilerSettings {
+            paper: PaperPreset::A4,
+            ..settings_22x28()
+        }
+        .layout()
+        .unwrap();
+        assert_eq!((a4.columns, a4.rows), (3, 3));
+        assert_eq!(a4.page_count(), 9);
+
+        let a3 = TilerSettings {
+            paper: PaperPreset::A3,
+            ..settings_22x28()
+        }
+        .layout()
+        .unwrap();
+        assert_eq!((a3.columns, a3.rows), (2, 2));
+        assert_eq!(a3.page_count(), 4);
+
+        let a0 = TilerSettings {
+            paper: PaperPreset::A0,
+            ..settings_22x28()
+        }
+        .layout()
+        .unwrap();
+        assert_eq!(a0.page_count(), 1);
     }
 
     #[test]
@@ -388,7 +594,7 @@ mod tests {
 
         settings.grid_width = 19;
         settings.grid_height = 19;
-        settings.square_unit = SquareUnit::Millimeters;
+        settings.square_unit = LengthUnit::Millimeters;
         settings.square_size = 25.4;
         let (width, height) = settings.map_dimensions_in();
         assert_close(width, 19.0);
@@ -397,8 +603,8 @@ mod tests {
 
     #[test]
     fn square_size_bounds_cover_one_inch_in_both_units() {
-        assert!(square_size_bounds(SquareUnit::Inches).contains(&1.0));
-        assert!(square_size_bounds(SquareUnit::Millimeters).contains(&25.4));
+        assert!(square_size_bounds(LengthUnit::Inches).contains(&1.0));
+        assert!(square_size_bounds(LengthUnit::Millimeters).contains(&25.4));
     }
 
     #[test]

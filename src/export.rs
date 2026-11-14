@@ -700,7 +700,7 @@ fn unique_tile_folder(parent: &Path, stem: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiler::{PaperPreset, SizeMode, TilerSettings};
+    use crate::tiler::{Orientation, PaperPreset, SizeMode, TilerSettings};
     use image::{Rgb, RgbImage};
 
     fn tiny_source(width: u32, height: u32) -> DynamicImage {
@@ -789,6 +789,68 @@ mod tests {
             assert!(operators.contains(&"W"), "page lacks a clip operation");
             assert!(operators.contains(&"n"), "page lacks a clip end operation");
         }
+    }
+
+    fn one_page_layout(paper: PaperPreset, orientation: Orientation) -> TileLayout {
+        let mut settings = TilerSettings {
+            mode: SizeMode::Exact,
+            paper,
+            orientation,
+            margin_in: 0.0,
+            overlap_in: 0.0,
+            ..TilerSettings::default()
+        };
+        let (width_in, height_in) = settings.paper_size_in();
+        settings.exact_width_in = width_in;
+        settings.exact_height_in = height_in;
+        settings.layout().unwrap()
+    }
+
+    fn pdf_media_box(layout: &TileLayout) -> (f32, f32) {
+        let bytes = build_pdf_bytes(layout, &tiny_source(100, 100), false, |_| {}).unwrap();
+        let document = lopdf::Document::load_mem(&bytes).unwrap();
+        let page_id = *document.get_pages().values().next().unwrap();
+        let page = document.get_dictionary(page_id).unwrap();
+        let media_box = page.get(b"MediaBox").unwrap().as_array().unwrap();
+        let values: Vec<f32> = media_box
+            .iter()
+            .map(|value| value.as_float().unwrap())
+            .collect();
+        (values[2] - values[0], values[3] - values[1])
+    }
+
+    #[test]
+    fn a4_pdf_media_box_matches_iso_dimensions() {
+        let (width, height) =
+            pdf_media_box(&one_page_layout(PaperPreset::A4, Orientation::Portrait));
+        assert!((width - 595.28).abs() < 0.02, "A4 width was {width}");
+        assert!((height - 841.89).abs() < 0.02, "A4 height was {height}");
+        assert!((width - (210.0_f32 / 25.4 * 72.0)).abs() < 0.01);
+        assert!((height - (297.0_f32 / 25.4 * 72.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn a3_pdf_media_box_matches_iso_dimensions() {
+        let (width, height) =
+            pdf_media_box(&one_page_layout(PaperPreset::A3, Orientation::Portrait));
+        assert!((width - 841.89).abs() < 0.02, "A3 width was {width}");
+        assert!((height - 1190.55).abs() < 0.02, "A3 height was {height}");
+        assert!((width - (297.0_f32 / 25.4 * 72.0)).abs() < 0.01);
+        assert!((height - (420.0_f32 / 25.4 * 72.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn a4_landscape_pdf_media_box_swaps_dimensions() {
+        let (width, height) =
+            pdf_media_box(&one_page_layout(PaperPreset::A4, Orientation::Landscape));
+        assert!(
+            (width - 841.89).abs() < 0.02,
+            "A4 landscape width was {width}"
+        );
+        assert!(
+            (height - 595.28).abs() < 0.02,
+            "A4 landscape height was {height}"
+        );
     }
 
     #[test]
