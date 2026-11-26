@@ -1,14 +1,20 @@
 [package]
 name = "table-scale"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
-description = "3D miniature scale converter and multi-page battle map print tiler."
+description = "3D miniature scale converter, STL base generator, and multi-page battle map print tiler."
+authors = ["Prisma Chill"]
 keywords = ["tabletop", "miniatures", "battle-map", "pdf", "egui"]
 categories = ["graphics", "gui"]
 
 [dependencies]
+ab_glyph = "0.2.32"
+epaint_default_fonts = "0.37.0"
+glam = "0.34.3"
+i_overlay = "9.2.0"
+spade = "2.15.1"
 eframe = { version = "0.37.0", default-features = false, features = [
     "accesskit",
     "clipboard",

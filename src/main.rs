@@ -1,8 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod base_preview;
+mod base_ui;
 mod export;
 mod scale;
+mod stl_base;
 mod theme;
 mod tiler;
 

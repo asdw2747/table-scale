@@ -13,6 +13,7 @@ use eframe::egui::{
 };
 use image::DynamicImage;
 
+use crate::base_ui::{BaseAction, BaseUi};
 use crate::export::{self, ExportJob};
 use crate::scale::{self, SCALE_PRESETS};
 use crate::theme;
@@ -23,6 +24,12 @@ use crate::tiler::{
 const SETTINGS_WIDTH: f32 = 342.0;
 const PREVIEW_MIN_HEIGHT: f32 = 180.0;
 const MAX_IMAGE_PIXELS: u64 = 100_000_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    Map2D,
+    Bases3D,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tab {
@@ -126,6 +133,7 @@ impl Toast {
 }
 
 pub struct TableScaleApp {
+    mode: Mode,
     tab: Tab,
     source_idx: usize,
     target_idx: usize,
@@ -143,6 +151,7 @@ pub struct TableScaleApp {
     include_guides: bool,
     allow_stretched_export: bool,
     export_job: Option<ExportJob>,
+    base: BaseUi,
     toast: Option<Toast>,
 }
 
@@ -150,6 +159,7 @@ impl TableScaleApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
         Self {
+            mode: Mode::Map2D,
             tab: Tab::Scaler,
             source_idx: 0,
             target_idx: 2,
@@ -170,6 +180,7 @@ impl TableScaleApp {
             include_guides: true,
             allow_stretched_export: false,
             export_job: None,
+            base: BaseUi::new(),
             toast: None,
         }
     }
@@ -260,6 +271,7 @@ impl TableScaleApp {
         }
         if let Some(position) = paths.iter().position(|path| is_supported_image(path)) {
             let path = paths.swap_remove(position);
+            self.mode = Mode::Map2D;
             self.tab = Tab::Tiler;
             self.load_map(ctx, &path);
         } else {
@@ -282,6 +294,7 @@ impl TableScaleApp {
         self.map_error = None;
         self.allow_stretched_export = false;
         self.preview.reset();
+        self.mode = Mode::Map2D;
         self.tab = Tab::Tiler;
 
         let path_owned = path.to_path_buf();
@@ -347,6 +360,7 @@ impl TableScaleApp {
             }
         }
         if let Some(path) = dialog.pick_file() {
+            self.mode = Mode::Map2D;
             self.tab = Tab::Tiler;
             self.load_map(ctx, &path);
         }
@@ -425,6 +439,77 @@ impl TableScaleApp {
         ctx.request_repaint();
     }
 
+    fn bases_ui(&mut self, ui: &mut Ui) {
+        if let Some(action) = self.base.ui(ui) {
+            self.handle_base_action(ui.ctx(), action);
+        }
+    }
+
+    fn handle_base_action(&mut self, ctx: &egui::Context, action: BaseAction) {
+        if self.export_job.is_some() {
+            self.set_toast("Wait for the current export to finish.", true, 3.0);
+            return;
+        }
+        match action {
+            BaseAction::ExportSingle => {
+                let params = self.base.export_params();
+                let name = self.base.character_name().trim().to_owned();
+                if name.is_empty() {
+                    self.set_toast("Enter a character name before exporting.", true, 4.0);
+                    return;
+                }
+                if let Err(error) = params.validate() {
+                    self.set_toast(error, true, 5.0);
+                    return;
+                }
+                let default_name = params.file_name(&name);
+                let dialog = rfd::FileDialog::new()
+                    .add_filter("STL mesh", &["stl"])
+                    .set_title("Export watertight base STL")
+                    .set_file_name(default_name);
+                if let Some(mut path) = dialog.save_file() {
+                    if path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .is_none_or(|extension| !extension.eq_ignore_ascii_case("stl"))
+                    {
+                        path.set_extension("stl");
+                    }
+                    self.export_job = Some(export::start_stl_export(path, params, name));
+                    self.toast = None;
+                    ctx.request_repaint();
+                }
+            }
+            BaseAction::ExportBatch => {
+                let params = self.base.export_params();
+                let names = self.base.batch_names();
+                if names.is_empty() {
+                    self.set_toast("Add at least one name to the roster.", true, 4.0);
+                    return;
+                }
+                if names.len() > 500 {
+                    self.set_toast("Limit the roster to 500 names per batch.", true, 4.0);
+                    return;
+                }
+                for name in &names {
+                    if let Err(error) = params.with_name(name).validate() {
+                        self.set_toast(format!("{name}: {error}"), true, 6.0);
+                        return;
+                    }
+                }
+                let Some(folder) = rfd::FileDialog::new()
+                    .set_title("Choose a folder for roster STLs")
+                    .pick_folder()
+                else {
+                    return;
+                };
+                self.export_job = Some(export::start_stl_batch_export(folder, params, names));
+                self.toast = None;
+                ctx.request_repaint();
+            }
+        }
+    }
+
     fn aspect_mismatch(&self) -> Option<(f64, f64)> {
         let map = self.map.as_ref()?;
         let (map_w, map_h) = self.tiler.map_dimensions_in();
@@ -477,7 +562,7 @@ impl TableScaleApp {
                                 .color(theme::TEXT),
                         );
                         ui.label(
-                            RichText::new("3D miniature scale converter & battle map print tiler")
+                            RichText::new("3D miniature scale converter, STL base generator & battle map print tiler")
                                 .size(11.5)
                                 .color(theme::MUTED),
                         );
@@ -495,18 +580,29 @@ impl TableScaleApp {
                 });
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if tab_button(ui, "Miniature Scaler", self.tab == Tab::Scaler) {
-                        self.tab = Tab::Scaler;
+                    if mode_button(ui, "2D Map Print", self.mode == Mode::Map2D) {
+                        self.mode = Mode::Map2D;
                     }
-                    if tab_button(ui, "Battle Map Tiler", self.tab == Tab::Tiler) {
-                        self.tab = Tab::Tiler;
+                    if mode_button(ui, "3D Mini Bases", self.mode == Mode::Bases3D) {
+                        self.mode = Mode::Bases3D;
+                    }
+                    if self.mode == Mode::Map2D {
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                        if tab_button(ui, "Miniature Scaler", self.tab == Tab::Scaler) {
+                            self.tab = Tab::Scaler;
+                        }
+                        if tab_button(ui, "Battle Map Tiler", self.tab == Tab::Tiler) {
+                            self.tab = Tab::Tiler;
+                        }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new("Drop a map anywhere in the Tiler tab")
-                                .size(11.0)
-                                .color(theme::DIM),
-                        );
+                        let hint = match self.mode {
+                            Mode::Map2D => "Drop a map anywhere in the Tiler tab",
+                            Mode::Bases3D => "Watertight STL \u{00b7} magnet pockets \u{00b7} nameplates",
+                        };
+                        ui.label(RichText::new(hint).size(11.0).color(theme::DIM));
                     });
                 });
             });
@@ -1815,10 +1911,15 @@ impl eframe::App for TableScaleApp {
 
         let command = ctx.input(|input| input.modifiers.command);
         if command && ctx.input(|input| input.key_pressed(egui::Key::Num1)) {
+            self.mode = Mode::Map2D;
             self.tab = Tab::Scaler;
         }
         if command && ctx.input(|input| input.key_pressed(egui::Key::Num2)) {
+            self.mode = Mode::Map2D;
             self.tab = Tab::Tiler;
+        }
+        if command && ctx.input(|input| input.key_pressed(egui::Key::Num3)) {
+            self.mode = Mode::Bases3D;
         }
 
         self.header_ui(ui);
@@ -1831,9 +1932,12 @@ impl eframe::App for TableScaleApp {
                 top: 8,
                 bottom: 8,
             }))
-            .show(ui, |ui| match self.tab {
-                Tab::Scaler => self.scaler_ui(ui),
-                Tab::Tiler => self.tiler_ui(ui),
+            .show(ui, |ui| match self.mode {
+                Mode::Map2D => match self.tab {
+                    Tab::Scaler => self.scaler_ui(ui),
+                    Tab::Tiler => self.tiler_ui(ui),
+                },
+                Mode::Bases3D => self.bases_ui(ui),
             });
 
         if self.export_job.is_some() || self.map_loading.is_some() {
@@ -1873,13 +1977,32 @@ fn paper_choice_label(paper: PaperPreset, tiler: &TilerSettings) -> String {
     }
 }
 
+fn mode_button(ui: &mut Ui, label: &str, selected: bool) -> bool {
+    let button = egui::Button::new(RichText::new(label).size(13.0).strong().color(if selected {
+        theme::ACCENT_INK
+    } else {
+        theme::MUTED
+    }))
+    .min_size(vec2(138.0, 34.0));
+    let button = if selected {
+        button
+            .fill(theme::ACCENT)
+            .stroke(Stroke::new(1.0, theme::ACCENT_BRIGHT))
+    } else {
+        button
+            .fill(theme::SURFACE_ALT)
+            .stroke(Stroke::new(1.0, theme::BORDER_SOFT))
+    };
+    ui.add(button).clicked()
+}
+
 fn tab_button(ui: &mut Ui, label: &str, selected: bool) -> bool {
     let button = egui::Button::new(RichText::new(label).size(13.5).color(if selected {
         theme::ACCENT_BRIGHT
     } else {
         theme::MUTED
     }))
-    .min_size(vec2(172.0, 34.0));
+    .min_size(vec2(160.0, 34.0));
     let button = if selected {
         button
             .fill(Color32::from_rgb(0x30, 0x27, 0x19))

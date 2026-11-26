@@ -17,6 +17,7 @@ use printpdf::{
     TextItem, WindingOrder, XObjectTransform,
 };
 
+use crate::stl_base::{self, BaseParams};
 use crate::tiler::{Tile, TileLayout};
 
 pub const OUTPUT_DPI: f64 = 300.0;
@@ -28,6 +29,7 @@ pub const PIXELS_PER_METRE_AT_300_DPI: u32 = 11_811;
 pub enum ExportKind {
     Pdf,
     PngTiles,
+    Stl,
 }
 
 #[derive(Debug)]
@@ -44,6 +46,8 @@ impl ExportSummary {
             ExportKind::PngTiles => {
                 format!("{} PNG tiles saved", self.pages)
             }
+            ExportKind::Stl if self.pages == 1 => "STL base exported".to_owned(),
+            ExportKind::Stl => format!("{} STL bases exported", self.pages),
         }
     }
 }
@@ -160,6 +164,125 @@ pub fn start_png_export(
         progress,
         description: "Rendering 300 DPI tiles\u{2026}".to_owned(),
     }
+}
+
+/// Generate and write one watertight base STL.
+pub fn start_stl_export(path: PathBuf, params: BaseParams, name: String) -> ExportJob {
+    let progress = Arc::new(AtomicU32::new(0));
+    let worker_progress = Arc::clone(&progress);
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result = (|| {
+            worker_progress.store(80, Ordering::Relaxed);
+            let mesh = stl_base::generate_base(&params)?;
+            mesh.validate_topology()
+                .map_err(|error| format!("Internal mesh check failed: {error}"))?;
+            worker_progress.store(720, Ordering::Relaxed);
+            let label = format!(
+                "{} {:.1}x{:.1}mm",
+                name.trim(),
+                params.width_mm,
+                params.depth_mm
+            );
+            stl_base::write_stl(&path, &mesh, &label)?;
+            worker_progress.store(1000, Ordering::Relaxed);
+            Ok(ExportSummary {
+                kind: ExportKind::Stl,
+                output: path,
+                pages: 1,
+            })
+        })();
+        let _ = sender.send(result);
+    });
+
+    ExportJob {
+        receiver,
+        progress,
+        description: "Generating watertight STL\u{2026}".to_owned(),
+    }
+}
+
+/// Generate one STL per non-empty line of a character roster.
+pub fn start_stl_batch_export(
+    parent: PathBuf,
+    params: BaseParams,
+    names: Vec<String>,
+) -> ExportJob {
+    let progress = Arc::new(AtomicU32::new(0));
+    let worker_progress = Arc::clone(&progress);
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result = (|| {
+            std::fs::create_dir_all(&parent)
+                .map_err(|error| format!("Could not create the STL folder: {error}"))?;
+            let total = names.len().max(1);
+            let mut written = 0usize;
+            for (index, name) in names.iter().enumerate() {
+                let name = name.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let base_params = params.with_name(name);
+                base_params
+                    .validate()
+                    .map_err(|error| format!("{name}: {error}"))?;
+                worker_progress.store(
+                    ((index as f32 / total as f32) * 850.0 + 40.0) as u32,
+                    Ordering::Relaxed,
+                );
+                let mesh = stl_base::generate_base(&base_params)
+                    .map_err(|error| format!("{name}: {error}"))?;
+                mesh.validate_topology()
+                    .map_err(|error| format!("{name}: internal mesh check failed: {error}"))?;
+                let file_name = base_params.file_name(name);
+                let path = unique_stl_path(&parent, &file_name);
+                let label = format!(
+                    "{} {:.1}x{:.1}mm",
+                    name, base_params.width_mm, base_params.depth_mm
+                );
+                stl_base::write_stl(&path, &mesh, &label)
+                    .map_err(|error| format!("{name}: {error}"))?;
+                written += 1;
+            }
+            if written == 0 {
+                return Err("The roster has no usable names.".to_owned());
+            }
+            worker_progress.store(1000, Ordering::Relaxed);
+            Ok(ExportSummary {
+                kind: ExportKind::Stl,
+                output: parent,
+                pages: written,
+            })
+        })();
+        let _ = sender.send(result);
+    });
+
+    ExportJob {
+        receiver,
+        progress,
+        description: "Generating roster STLs\u{2026}".to_owned(),
+    }
+}
+
+fn unique_stl_path(parent: &Path, file_name: &str) -> PathBuf {
+    let first = parent.join(file_name);
+    if !first.exists() {
+        return first;
+    }
+    let path = Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("base");
+    for index in 2..10_000 {
+        let candidate = parent.join(format!("{stem}-{index}.stl"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    first
 }
 
 /// Build a self-contained, true-scale PDF in memory.
@@ -1021,6 +1144,73 @@ mod tests {
             })
             .collect();
         assert_eq!(tiles.len(), 1);
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    fn wait_for_export(job: &ExportJob, seconds: u64) -> Result<ExportSummary, String> {
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(result) = job.poll() {
+                return result;
+            }
+            if start.elapsed() > std::time::Duration::from_secs(seconds) {
+                panic!("STL export job timed out");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn stl_export_job_writes_a_valid_binary_stl() {
+        let temp = std::env::temp_dir().join(format!(
+            "tablescale-stl-export-test-{}-{}",
+            std::process::id(),
+            unique_token()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let path = temp.join("hero.stl");
+        let job = start_stl_export(path.clone(), BaseParams::default(), "Hero".to_owned());
+        let summary = wait_for_export(&job, 30).unwrap();
+        assert_eq!(summary.pages, 1);
+        assert_eq!(summary.output, path);
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[..10], b"TableScale");
+        let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+        assert!(count > 100);
+        assert_eq!(bytes.len(), 84 + count * 50);
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn stl_batch_export_writes_each_roster_name() {
+        let temp = std::env::temp_dir().join(format!(
+            "tablescale-stl-batch-test-{}-{}",
+            std::process::id(),
+            unique_token()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let job = start_stl_batch_export(
+            temp.clone(),
+            BaseParams::default(),
+            vec!["Thor".to_owned(), "Storm".to_owned()],
+        );
+        let summary = wait_for_export(&job, 60).unwrap();
+        assert_eq!(summary.pages, 2);
+        let files: Vec<_> = std::fs::read_dir(&temp)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("stl"))
+            })
+            .collect();
+        assert_eq!(files.len(), 2);
+        for file in files {
+            let bytes = std::fs::read(file.path()).unwrap();
+            assert_eq!(&bytes[..10], b"TableScale");
+        }
         let _ = std::fs::remove_dir_all(temp);
     }
 
